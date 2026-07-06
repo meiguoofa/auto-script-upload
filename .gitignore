@@ -1,0 +1,18 @@
+# Python
+.venv/
+__pycache__/
+*.pyc
+
+# Browser profile — contains login session cookies, must never be committed
+browser_data/
+
+# Downloaded media & error screenshots (runtime artifacts)
+downloads/
+errors/
+
+# Generated analysis/output artifacts
+page_fields.json
+page_form.png
+excel_preview.json
+reader_test.json
+export_*.xlsx

@@ -1,0 +1,17 @@
+剧集名 #title  
+剧集描述 #description  
+总集数 #totalVideoNum   
+ 免费预览集数 #previewVideoNum —8
+ 个人页剧集展示集数 #previewVideoNumOnProfile—3集
+关联合同 #uod2yvs  —下拉选择即可
+目标人群—手动添加
+题材标签—与表单对比，有重复的选出相应选项即可
+源语言 —中文
+是否 AI 短剧 —是
+制作方/地区（Cascader，已有默认值）—默认值即可
+托管模式 #consignmentStatus—开启
+ 版权自查承诺 #signed  版权自查承诺 #signed —默认勾选
+ 发布方式（自动/手动/定时）—自动发布
+ 本地上传 / 百度网盘上传（视频）—本地上传
+ 提交 / 保存 / 放弃更改—保存
+添加演员 —不进行填写
