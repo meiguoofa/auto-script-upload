@@ -8,6 +8,33 @@ from playwright.async_api import Page, TimeoutError as PlaywrightTimeout
 from config import COMBOBOX_PLACEHOLDERS, DEFAULTS, SELECTORS, TARGET_LIST_URL
 
 
+async def ensure_logged_in(context, list_url: str = TARGET_LIST_URL) -> None:
+    """打开列表页检查登录状态，未登录则等待用户手动登录，登录完成后关闭检查页。"""
+    page = await context.new_page()
+    await page.set_viewport_size({"width": 1440, "height": 900})
+    await page.goto(list_url, wait_until="domcontentloaded")
+    # 等待可能的 JS 重定向
+    await page.wait_for_timeout(3000)
+
+    current_url = page.url
+    if "login" in current_url.lower() or "signin" in current_url.lower():
+        print("[等待登录] 检测到未登录，请在浏览器中手动完成登录...")
+        print("[等待登录] 登录完成后脚本会自动继续，无需其他操作。")
+        try:
+            await page.wait_for_url(
+                lambda url: "login" not in url.lower() and "signin" not in url.lower(),
+                timeout=300000,
+            )
+        except PlaywrightTimeout:
+            await page.close()
+            raise RuntimeError("等待登录超时（5 分钟），请重新运行脚本")
+        print("[等待登录] 登录成功！")
+        # 等待登录后页面稳定
+        await page.wait_for_timeout(3000)
+
+    await page.close()
+
+
 async def create_new_draft(context, list_url: str = TARGET_LIST_URL) -> Page:
     """在 series/list 点击「新建」，等待导航到 draft 编辑页，返回 Page。"""
     from config import ERROR_DIR
@@ -15,12 +42,24 @@ async def create_new_draft(context, list_url: str = TARGET_LIST_URL) -> Page:
     page = await context.new_page()
     await page.set_viewport_size({"width": 1440, "height": 900})
     await page.goto(list_url, wait_until="domcontentloaded")
+    # 等待可能的 JS 重定向
+    await page.wait_for_timeout(3000)
 
-    # 检查是否被踢到登录页
+    # 如果仍在登录页，等待用户登录完成（不关闭页面）
     current_url = page.url
     if "login" in current_url.lower() or "signin" in current_url.lower():
-        await page.close()
-        raise RuntimeError(f"未登录，当前URL: {current_url}，请先运行 analyze_page.py 登录")
+        print("[等待登录] 请在浏览器中完成登录...")
+        try:
+            await page.wait_for_url(
+                lambda url: "login" not in url.lower() and "signin" not in url.lower(),
+                timeout=300000,
+            )
+        except PlaywrightTimeout:
+            await page.close()
+            raise RuntimeError("等待登录超时（5 分钟），请重新运行脚本")
+        print("[等待登录] 登录成功，继续新建 draft...")
+        await page.goto(list_url, wait_until="domcontentloaded")
+        await page.wait_for_timeout(2000)
 
     create_btn = page.get_by_role("button", name="新建")
     if await create_btn.count() == 0:
@@ -30,7 +69,6 @@ async def create_new_draft(context, list_url: str = TARGET_LIST_URL) -> Page:
         await create_btn.first.wait_for(state="visible", timeout=10000)
         await create_btn.first.click()
 
-        # 等待 draft 页：可能是 URL 变化，也可能是当前页出现 #title 输入框（modal 或 SPA 路由）
         try:
             await page.wait_for_url("**/series/draft*", wait_until="domcontentloaded", timeout=30000)
         except PlaywrightTimeout:
@@ -111,7 +149,7 @@ async def select_dropdown_by_placeholder(page: Page, placeholder: str, option_te
 
 
 async def select_contract(page: Page) -> None:
-    """选择「关联合同」下拉框。选项是自定义 div，不使用通用 option 结构。"""
+    """选择「关联合同」下拉框，默认选第一个选项。"""
     placeholder = COMBOBOX_PLACEHOLDERS["关联合同"]
     combobox = page.get_by_role("combobox", name=placeholder)
     if await combobox.count() == 0:
@@ -120,12 +158,10 @@ async def select_contract(page: Page) -> None:
     await combobox.first.click()
     await page.wait_for_timeout(600)
 
-    keyword = DEFAULTS["contract"]
-    # 选项在 semi-select-option-list 下的直接子 div 中
-    option = page.locator(".semi-select-option-list > div").filter(has_text=keyword)
-    if await option.count() == 0:
-        option = page.get_by_text(keyword)
-    await option.first.click()
+    # 选择第一个选项
+    option = page.locator(".semi-select-option-list > div").first
+    await option.wait_for(state="visible", timeout=10000)
+    await option.click()
     await page.wait_for_timeout(300)
 
 
@@ -258,15 +294,28 @@ async def wait_for_uploads_complete(page: Page, expected: int, timeout_s: int = 
 
 
 async def click_save(page: Page) -> None:
-    """点击保存按钮。"""
-    save_btn = page.locator(SELECTORS["save_button"])
-    await save_btn.scroll_into_view_if_needed()
-    # 如果按钮禁用，等一小会儿再试
-    if not await save_btn.is_enabled():
-        await page.wait_for_timeout(2000)
-    await save_btn.click()
-    # 给保存请求响应时间
-    await page.wait_for_timeout(3000)
+    """点击保存按钮，确保触发保存事件。"""
+    save_btn = page.locator('button[data-size="lg"][data-type="neutral"] .Button__content:has-text("保存")')
+    if await save_btn.count() == 0:
+        save_btn = page.locator(SELECTORS["save_button"])
+    btn = save_btn.first
+    await btn.wait_for(state="visible", timeout=10000)
+    await btn.scroll_into_view_if_needed()
+
+    # 确保按钮已启用
+    for _ in range(5):
+        parent = page.locator('button[data-size="lg"][data-type="neutral"]:has-text("保存")').first
+        disabled = await parent.get_attribute("aria-disabled")
+        if disabled != "true":
+            break
+        await page.wait_for_timeout(1000)
+
+    # 用 evaluate 直接在 button 元素上触发点击，绕过可能的遮挡
+    await parent.evaluate("el => el.click()")
+    print("[click_save] 已通过 JS click 触发保存按钮")
+
+    # 等待保存请求完成
+    await page.wait_for_timeout(5000)
 
 
 async def fill_and_save(page, drama) -> None:

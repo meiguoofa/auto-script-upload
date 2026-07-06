@@ -43,7 +43,7 @@ SELECTORS = {
     "cover_upload_area": 'div:has-text("封面图")',  # 在其下再找上传区
     # 操作按钮
     "create_button": 'div.Button__content:has-text("新建")',
-    "save_button": 'button:has-text("保存")',
+    "save_button": 'button[data-size="lg"][data-type="neutral"]:has-text("保存")',
     "submit_button": 'button:has-text("提交")',
     "discard_button": 'button:has-text("放弃更改")',
 }
