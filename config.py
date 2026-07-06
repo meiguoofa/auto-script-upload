@@ -22,6 +22,7 @@ DEFAULTS = {
     "source_language": "中文",
     "is_ai_drama": "是",
     "publish_method": "过审后自动发布",
+    "contract": "MINTAI PTE. LTD.",
 }
 
 # 表单字段 selector / 定位文本
@@ -49,6 +50,7 @@ SELECTORS = {
 
 # 字段标签 → 下拉框 placeholder/aria 文本 的映射
 COMBOBOX_PLACEHOLDERS = {
+    "关联合同": "请选择合同",
     "目标人群": "选择内容主要面向的目标人群",
     "源语言": "请选择剧集的源语言",
     "AI 短剧": "请选择是否 AI 短剧",

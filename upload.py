@@ -2,6 +2,7 @@
 
 import argparse
 import asyncio
+import secrets
 import sys
 from pathlib import Path
 from typing import Optional
@@ -29,6 +30,7 @@ from downloader import ensure_downloads
 from form import create_new_draft, fill_and_save
 from models import Drama
 from reader import read_excel
+from video_validator import filter_videos
 
 
 async def process_one_drama(context, drama: Drama) -> None:
@@ -74,6 +76,19 @@ async def run(excel_path: Path, limit: Optional[int] = None) -> None:
     # 下载封面与视频
     print("[INFO] 开始下载封面和视频...")
     dramas = await ensure_downloads(dramas)
+
+    # 过滤不符合要求的视频，并为剧名加随机后缀避免（合同+剧名）重复
+    for d in dramas:
+        if d.status == "ready":
+            d.video_paths = filter_videos(d.video_paths)
+            if not d.video_paths:
+                d.status = "failed"
+                d.error = "没有符合大小/时长要求的视频"
+            else:
+                suffix = secrets.token_hex(3)
+                base = d.title[:28].rstrip("_")
+                d.title = f"{base}_{suffix}"
+
     ready = [d for d in dramas if d.status == "ready"]
     failed_download = [d for d in dramas if d.status == "failed"]
     if failed_download:

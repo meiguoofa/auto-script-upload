@@ -22,6 +22,7 @@ HEADER_MAP = {
     "新海报URL": "cover_url",
     "剧集数": "episode_count",
     "剧集 URL": "video_urls",
+    "剧集URL列表": "video_urls",
 }
 
 

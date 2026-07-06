@@ -1,6 +1,5 @@
 """Playwright 表单操作封装（异步 API）。"""
 
-import asyncio
 from pathlib import Path
 from typing import List, Optional
 
@@ -111,8 +110,28 @@ async def select_dropdown_by_placeholder(page: Page, placeholder: str, option_te
     await page.wait_for_timeout(300)
 
 
+async def select_contract(page: Page) -> None:
+    """选择「关联合同」下拉框。选项是自定义 div，不使用通用 option 结构。"""
+    placeholder = COMBOBOX_PLACEHOLDERS["关联合同"]
+    combobox = page.get_by_role("combobox", name=placeholder)
+    if await combobox.count() == 0:
+        combobox = page.locator(f'[role="combobox"]:has-text("{placeholder}")')
+    await combobox.first.scroll_into_view_if_needed()
+    await combobox.first.click()
+    await page.wait_for_timeout(600)
+
+    keyword = DEFAULTS["contract"]
+    # 选项在 semi-select-option-list 下的直接子 div 中
+    option = page.locator(".semi-select-option-list > div").filter(has_text=keyword)
+    if await option.count() == 0:
+        option = page.get_by_text(keyword)
+    await option.first.click()
+    await page.wait_for_timeout(300)
+
+
 async def set_dropdowns(page: Page) -> None:
     """设置需要选择的下拉项；选完后按 Esc 确保弹窗/遮罩关闭。"""
+    await select_contract(page)
     await select_dropdown_by_placeholder(
         page, COMBOBOX_PLACEHOLDERS["目标人群"], DEFAULTS["target_audience"]
     )
@@ -134,6 +153,18 @@ async def set_dropdowns(page: Page) -> None:
             pass
 
 
+async def fill_minimal_for_upload(page, drama) -> None:
+    """仅填写解锁「本地上传」按钮所需的最少字段：剧集名、剧集描述、关联合同。
+
+    平台建议剧名字符数不超过 35，超过时截断以避免后续合同创建接口报错。
+    """
+    title = drama.title[:35]
+    await page.fill(SELECTORS["title"], title)
+    await page.fill(SELECTORS["description"], drama.description)
+    await select_contract(page)
+    await close_overlays(page)
+
+
 async def close_overlays(page: Page) -> None:
     """关闭可能残留的下拉/弹窗/portal，避免遮挡点击。"""
     await page.keyboard.press("Escape")
@@ -143,86 +174,87 @@ async def close_overlays(page: Page) -> None:
         await page.locator("h1, h2, h3").first.click()
     except Exception:
         pass
-    # 等待常见 portal 消失
-    for selector in [".semi-portal", ".semi-popover-wrapper", ".semi-tooltip-wrapper"]:
-        try:
-            await page.locator(selector).first.wait_for(state="hidden", timeout=3000)
-        except Exception:
-            pass
+    await page.wait_for_timeout(300)
+    # 强制移除仍存在的 portal 遮罩，避免遮挡后续点击
+    try:
+        await page.locator(".semi-portal, .semi-popover-wrapper, .semi-tooltip-wrapper").evaluate_all(
+            "els => els.forEach(el => el.remove())"
+        )
+    except Exception:
+        pass
 
 
 async def upload_cover(page: Page, cover_path: Path) -> None:
-    """上传封面图。优先用 filechooser，兜底用隐藏 file input。"""
+    """上传封面图：操作隐藏 input，处理裁剪弹窗后确认。"""
     cover_path = Path(cover_path)
     if not cover_path.exists():
         raise FileNotFoundError(f"封面图不存在: {cover_path}")
 
-    # 找到封面图区域并滚动到视口
-    section = page.locator("div", has_text="封面图").first
-    await section.scroll_into_view_if_needed()
+    # 封面图对应的隐藏 input 接受 image/*
+    file_input = page.locator("input[type='file'][accept='image/*']").first
+    await file_input.set_input_files(str(cover_path))
 
-    # 优先点击区域触发 filechooser
+    # 等待并处理裁剪弹窗
+    modal = page.locator('[data-testid="minidrama-dialog"]')
     try:
-        async with page.expect_file_chooser(timeout=10000) as fc_info:
-            await section.click()
-        file_chooser = await fc_info.value
-        await file_chooser.set_files(str(cover_path))
-        return
+        await modal.wait_for(state="visible", timeout=8000)
     except PlaywrightTimeout:
-        pass
-
-    # 兜底：找隐藏 file input
-    file_inputs = page.locator("input[type='file']")
-    if await file_inputs.count() > 0:
-        await file_inputs.first.set_input_files(str(cover_path))
         return
 
-    raise RuntimeError("无法定位封面图上传控件")
+    confirm_btn = modal.locator('button:has-text("Confirm")')
+    if await confirm_btn.count() == 0:
+        confirm_btn = modal.locator('button:has-text("确认")')
+    if await confirm_btn.count() == 0:
+        confirm_btn = modal.locator('button[type="button"]').last
+    await confirm_btn.click()
+    await modal.wait_for(state="hidden", timeout=10000)
 
 
-async def upload_videos(page: Page, video_paths: List[Path], timeout_per_video: int = 180) -> None:
-    """点击本地上传，批量选择视频文件，并等待上传完成。"""
+async def upload_videos(page: Page, video_paths: List[Path]) -> None:
+    """点击「本地上传」按钮触发 file chooser，批量选择视频，触发上传后不等待完成。"""
     video_paths = [Path(p) for p in video_paths]
     missing = [p for p in video_paths if not p.exists()]
     if missing:
         raise FileNotFoundError(f"视频文件不存在: {missing}")
 
-    expected_count = len(video_paths)
-    basenames = {p.stem for p in video_paths}
+    btn = page.locator('[class*="uploadContent"] button:has-text("本地上传")')
+    if await btn.count() == 0:
+        btn = page.locator(SELECTORS["local_upload_button"])
+    await btn.first.scroll_into_view_if_needed()
 
-    btn = page.locator(SELECTORS["local_upload_button"])
-    await btn.scroll_into_view_if_needed()
-
-    async with page.expect_file_chooser() as fc_info:
-        await btn.click()
+    async with page.expect_file_chooser(timeout=15000) as fc_info:
+        await btn.first.click()
     file_chooser = await fc_info.value
     await file_chooser.set_files([str(p) for p in video_paths])
 
-    # 先等上传 UI 渲染出来
-    await page.wait_for_timeout(5000)
+    # 给上传组件初始化时间
+    await page.wait_for_timeout(3000)
 
-    # 等待上传完成：轮询检查
-    deadline = asyncio.get_event_loop().time() + timeout_per_video * expected_count
-    while asyncio.get_event_loop().time() < deadline:
-        # 1. 页面中没有 loading/spin/progress 元素
-        loaders = page.locator(
-            ".loading, .spin, [class*='loading'], [class*='spin'], "
-            "[class*='progress'], [class*='uploading']"
+
+async def wait_for_uploads_complete(page: Page, expected: int, timeout_s: int = 900) -> None:
+    """通过监听控制台的 VIDEO_UPLOAD_FULL_FLOW_SUCCESS 事件，等待所有视频上传完成。"""
+    import asyncio
+
+    done_count = {"n": 0}
+
+    def _on_console(msg):
+        if "VIDEO_UPLOAD_FULL_FLOW_SUCCESS" in msg.text:
+            done_count["n"] += 1
+
+    page.on("console", _on_console)
+    try:
+        deadline = asyncio.get_event_loop().time() + timeout_s
+        while asyncio.get_event_loop().time() < deadline:
+            if done_count["n"] >= expected:
+                # 再给页面一点时间把视频写入表单状态
+                await page.wait_for_timeout(2000)
+                return
+            await asyncio.sleep(2)
+        raise TimeoutError(
+            f"视频上传等待超时：完成 {done_count['n']} / 预期 {expected}"
         )
-        has_loader = await loaders.count() > 0
-
-        # 2. 页面上能看到所有上传视频的文件名（去掉扩展名）
-        page_text = await page.locator("body").text_content() or ""
-        visible_names = sum(1 for name in basenames if name in page_text)
-
-        if not has_loader and visible_names >= expected_count:
-            # 再等一下让列表稳定
-            await page.wait_for_timeout(1500)
-            return
-
-        await asyncio.sleep(2)
-
-    raise TimeoutError("视频上传等待超时")
+    finally:
+        page.remove_listener("console", _on_console)
 
 
 async def click_save(page: Page) -> None:
@@ -239,12 +271,20 @@ async def click_save(page: Page) -> None:
 
 async def fill_and_save(page, drama) -> None:
     """对一个 draft 页完成：填表、上传、保存。"""
+    print(f"[row {drama.row_idx}] 填写基础信息...")
     await fill_basic_info(page, drama)
+    print(f"[row {drama.row_idx}] 设置下拉框...")
     await set_dropdowns(page)
+    print(f"[row {drama.row_idx}] 设置开关/单选...")
     await set_switches_and_radios(page)
+    # 选择下拉框后总集数会被清空，需要重新填入
+    await page.fill(SELECTORS["total_video_num"], str(drama.episode_count))
     await close_overlays(page)
+    print(f"[row {drama.row_idx}] 上传封面...")
     await upload_cover(page, drama.cover_path)
     await close_overlays(page)
+    print(f"[row {drama.row_idx}] 上传 {len(drama.video_paths)} 个视频...")
     await upload_videos(page, drama.video_paths)
     await close_overlays(page)
+    print(f"[row {drama.row_idx}] 点击保存...")
     await click_save(page)
