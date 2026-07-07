@@ -21,7 +21,7 @@ DEFAULTS = {
     "target_audience": "男性",
     "source_language": "中文",
     "is_ai_drama": "是",
-    "publish_method": "过审后自动发布",
+    "publish_method": "手动发布",
     "contract": "MINTAI PTE. LTD.",
 }
 

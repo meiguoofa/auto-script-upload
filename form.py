@@ -108,17 +108,63 @@ async def _set_checkbox(page: Page, selector: str, checked: bool = True) -> None
 
 
 async def set_switches_and_radios(page: Page) -> None:
-    """设置托管模式、版权承诺、发布方式单选。"""
+    """设置托管模式、版权承诺（含侧边栏全部 checkbox + 同意）、发布方式单选。"""
     await _set_checkbox(page, SELECTORS["consignment_status"], checked=True)
-    await _set_checkbox(page, SELECTORS["signed"], checked=True)
 
-    # 发布方式：找到包含「过审后自动发布」的 label，点击其内部 radio
-    publish_label = page.locator("label", has_text=DEFAULTS["publish_method"])
+    # ---- 步骤 1：勾选「本人承诺根据事实勾选《版权内容自查清单》...」 ----
+    # 页面此时只有这一个未勾选的 semi-checkbox，直接定位点击
+    promise_cb = page.locator("span.semi-checkbox-unChecked").first
+    await promise_cb.scroll_into_view_if_needed()
+    await promise_cb.click()
+    await page.wait_for_timeout(500)
+    print("[步骤1] 已点击「本人承诺」checkbox")
+
+    # ---- 步骤 2：等待侧边栏出现，勾选所有 checkbox ----
+    await page.wait_for_timeout(1000)
+    sidesheet = page.locator(".semi-sidesheet-body")
     try:
-        await publish_label.click(timeout=5000)
-    except Exception:
-        radio = publish_label.locator("input[type='radio']")
-        await radio.evaluate("el => el.click()")
+        await sidesheet.wait_for(state="visible", timeout=5000)
+    except PlaywrightTimeout:
+        print("[步骤2] 未检测到版权自查清单侧边栏，跳过")
+        sidesheet = None
+
+    if sidesheet and await sidesheet.count() > 0:
+        unchecked = sidesheet.locator("span.semi-checkbox-unChecked")
+        total = await sidesheet.locator("span.semi-checkbox").count()
+        clicked = 0
+        while await unchecked.count() > 0:
+            await unchecked.first.click()
+            clicked += 1
+            await page.wait_for_timeout(300)
+        print(f"[步骤2] 侧边栏共 {total} 个 checkbox，勾选了 {clicked} 个")
+
+        # ---- 步骤 3：点击「同意」按钮（用 JS evaluate 直接点击） ----
+        clicked_agree = await page.evaluate("""() => {
+            const btns = document.querySelectorAll('.semi-sidesheet-footer button');
+            for (const btn of btns) {
+                if (btn.textContent.trim() === '同意' && !btn.disabled) {
+                    btn.click();
+                    return true;
+                }
+            }
+            return false;
+        }""")
+        if clicked_agree:
+            print("[步骤3] 已点击「同意」")
+        else:
+            print("[步骤3] 未找到可点击的「同意」按钮")
+        await page.wait_for_timeout(1000)
+
+        # 确保侧边栏关闭
+        await page.keyboard.press("Escape")
+        await page.wait_for_timeout(500)
+
+    # ---- 发布方式：选择「手动发布」（点击 label 外层触发 Semi Design 状态变更） ----
+    manual_radio = page.locator("label.semi-radio:has-text('手动发布')")
+    await manual_radio.scroll_into_view_if_needed()
+    await manual_radio.click()
+    print("[发布方式] 已选择「手动发布」")
+    await page.wait_for_timeout(300)
 
 
 async def select_dropdown_by_placeholder(page: Page, placeholder: str, option_text: str) -> None:
@@ -179,6 +225,7 @@ async def set_dropdowns(page: Page) -> None:
     )
     # 关闭可能残留的下拉/弹窗遮罩
     await page.keyboard.press("Escape")
+    
     await page.wait_for_timeout(800)
     # 等待遮罩消失
     masks = page.locator(".semi-sidesheet-mask, .semi-modal-mask, .semi-popover-wrapper")
