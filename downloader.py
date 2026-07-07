@@ -74,10 +74,12 @@ async def ensure_downloads(dramas: List[Drama], max_concurrency: int = 10) -> Li
 
         for d in dramas:
             d.status = "downloading"
+            # 每部剧独立子目录，避免不同剧的封面/视频混在一起
+            drama_dir = DOWNLOAD_DIR / f"row_{d.row_idx}"
             # 封面
             if d.cover_url:
                 ext = _ext_from_url(d.cover_url)
-                dest = DOWNLOAD_DIR / f"cover_{d.row_idx}_{_url_hash(d.cover_url)}{ext}"
+                dest = drama_dir / f"cover_{_url_hash(d.cover_url)}{ext}"
                 coro = _bound_download(session, d.cover_url, dest)
                 tasks.append(coro)
                 path_map[id(coro)] = ("cover", d, None)
@@ -85,7 +87,7 @@ async def ensure_downloads(dramas: List[Drama], max_concurrency: int = 10) -> Li
             d.video_paths = []
             for i, url in enumerate(d.video_urls, start=1):
                 ext = _ext_from_url(url)
-                dest = DOWNLOAD_DIR / f"video_{d.row_idx}_ep{i}_{_url_hash(url)}{ext}"
+                dest = drama_dir / f"video_ep{i}_{_url_hash(url)}{ext}"
                 coro = _bound_download(session, url, dest)
                 tasks.append(coro)
                 path_map[id(coro)] = ("video", d, i - 1)
