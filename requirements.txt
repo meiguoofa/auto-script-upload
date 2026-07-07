@@ -3,3 +3,4 @@ aiohttp==3.14.1
 aiofiles==25.1.0
 openpyxl==3.1.5
 opencv-python-headless==5.0.0.93
+requests==2.32.3

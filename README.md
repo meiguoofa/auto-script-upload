@@ -56,6 +56,26 @@
 .venv/Scripts/python.exe upload.py path/to/your.xlsx
 ```
 
+## 自动化监控（monitor.py）
+
+监控服务端批次任务，完成后自动下载 xlsx 并触发 `upload.py`。
+
+```bash
+# 监控批次（默认每 30s 轮询一次，完成后自动下载 + 上传）
+.venv/Scripts/python.exe monitor.py <batch_id>
+
+# 只下载 xlsx 不触发 upload（用于测试）
+.venv/Scripts/python.exe monitor.py <batch_id> --no-upload
+
+# 限制只处理前 1 部剧（端到端测试）
+.venv/Scripts/python.exe monitor.py <batch_id> --limit 1
+
+# 自定义服务端地址和轮询间隔
+.venv/Scripts/python.exe monitor.py <batch_id> --server http://your-server:5173 --interval 60
+```
+
+`batch_id` 从服务端 `/daily-new/batches` 页面获取。下载的 xlsx 存放在 `./downloads/`。
+
 ## 输入文件说明
 
 ### export_*.xlsx
