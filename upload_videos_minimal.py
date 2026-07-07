@@ -16,6 +16,7 @@ from pathlib import Path
 from playwright.async_api import async_playwright
 
 from config import (
+    BASE_DIR,
     BROWSER_CHANNEL,
     DEFAULTS,
     ERROR_DIR,
@@ -42,8 +43,9 @@ from form import (
 from reader import read_excel
 from video_validator import filter_videos
 
-# 默认并发处理的剧集数；每部剧占用一个独立的浏览器 Tab。可用 --concurrency 覆盖
-MAX_CONCURRENT = 5
+# 默认并发处理的剧集数。2 为可靠上限：更高（4+）会触发平台“合同/合集创建”限流，
+# 导致 contractId 拿不到、上传不启动。可用 --concurrency 覆盖。
+MAX_CONCURRENT = 2
 
 
 async def process_one(context, d) -> None:
@@ -181,11 +183,20 @@ async def run(excel_path: Path, limit: int | None = None, concurrency: int = MAX
 
 def main():
     parser = argparse.ArgumentParser(description="TikTok Drama Center 自动上传")
-    parser.add_argument("excel", nargs="?", default="export_20260706_104908.xlsx", help="Excel 文件路径")
+    parser.add_argument("excel", nargs="?", default=None, help="Excel 文件路径；不传则自动选用目录下最新的 export_*.xlsx")
     parser.add_argument("--limit", type=int, default=None, help="仅处理前 N 部剧")
     parser.add_argument("--concurrency", type=int, default=MAX_CONCURRENT, help=f"同时并发处理的剧集数（每个剧一个 Tab），默认 {MAX_CONCURRENT}")
     args = parser.parse_args()
-    asyncio.run(run(Path(args.excel), limit=args.limit, concurrency=args.concurrency))
+
+    excel = args.excel
+    if excel is None:
+        excels = sorted(BASE_DIR.glob("export_*.xlsx"), key=lambda p: p.stat().st_mtime, reverse=True)
+        if not excels:
+            parser.error("未指定 Excel，且当前目录下没有 export_*.xlsx 文件")
+        excel = str(excels[0])
+        print(f"[INFO] 未指定 Excel，自动选用最新的: {Path(excel).name}")
+
+    asyncio.run(run(Path(excel), limit=args.limit, concurrency=args.concurrency))
 
 
 if __name__ == "__main__":
