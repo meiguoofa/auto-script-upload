@@ -42,8 +42,75 @@ from form import (
 from reader import read_excel
 from video_validator import filter_videos
 
+# 默认并发处理的剧集数；每部剧占用一个独立的浏览器 Tab。可用 --concurrency 覆盖
+MAX_CONCURRENT = 5
 
-async def run(excel_path: Path, limit: int | None = None) -> None:
+
+async def process_one(context, d) -> None:
+    """处理一部剧：新建 draft（独立 Tab）→ 填表 → 上传封面/视频 → 保存。失败时截图。"""
+    page = None
+    try:
+        page = await create_new_draft(context)
+        print(f"[row {d.row_idx}] 新建 draft: {page.url}")
+
+        page.on("console", lambda msg: print(f"[console {msg.type}] {msg.text}"))
+        page.on("pageerror", lambda err: print(f"[pageerror] {err}"))
+
+        print(f"[row {d.row_idx}] 本次使用剧名: {d.title}")
+
+        # 1. 填写基础文本字段
+        print(f"[row {d.row_idx}] 填写基础信息...")
+        await fill_basic_info(page, d)
+
+        # 2. 设置所有下拉框（关联合同、目标人群、源语言、AI短剧）
+        print(f"[row {d.row_idx}] 设置下拉框...")
+        await set_dropdowns(page)
+
+        # 3. 设置开关和单选（托管模式、版权承诺、发布方式）
+        print(f"[row {d.row_idx}] 设置开关/单选...")
+        await set_switches_and_radios(page)
+
+        # 4. 下拉框选择后总集数会被清空，重新填入
+        await page.fill(SELECTORS["total_video_num"], str(d.episode_count))
+        await close_overlays(page)
+
+        # 5. 上传封面
+        if d.cover_path and Path(d.cover_path).exists():
+            print(f"[row {d.row_idx}] 上传封面...")
+            await upload_cover(page, d.cover_path)
+            await close_overlays(page)
+
+        # 6. 上传视频
+        print(f"[row {d.row_idx}] 上传 {len(d.video_paths)} 个视频...")
+        await upload_videos(page, d.video_paths)
+
+        # 7. 等待视频上传完成
+        print(f"[row {d.row_idx}] 等待视频上传完成...")
+        await wait_for_uploads_complete(page, expected=len(d.video_paths))
+
+        # 8. 保存
+        print(f"[row {d.row_idx}] 点击保存...")
+        await close_overlays(page)
+        await click_save(page)
+        print(f"[row {d.row_idx}] [OK] 保存成功: {d.title}")
+
+    except Exception as e:
+        print(f"[row {d.row_idx}] [ERR] 失败: {e}")
+        if page:
+            try:
+                ERROR_DIR.mkdir(parents=True, exist_ok=True)
+                await page.screenshot(path=str(ERROR_DIR / f"row_{d.row_idx}_err.png"))
+            except Exception:
+                pass
+    finally:
+        if page:
+            try:
+                await page.close()
+            except Exception:
+                pass
+
+
+async def run(excel_path: Path, limit: int | None = None, concurrency: int = MAX_CONCURRENT) -> None:
     excel_path = Path(excel_path)
     dramas = read_excel(excel_path)
     print(f"[INFO] 从 {excel_path} 读取到 {len(dramas)} 部剧")
@@ -99,67 +166,14 @@ async def run(excel_path: Path, limit: int | None = None) -> None:
         # 先确认已登录，未登录则等待用户手动登录
         await ensure_logged_in(context)
 
-        for d in ready:
-            page = None
-            try:
-                page = await create_new_draft(context)
-                print(f"[row {d.row_idx}] 新建 draft: {page.url}")
+        # 并发处理：每部剧占用一个独立 Tab，同时最多 concurrency 部（至少 1，避免 0 卡死）
+        sem = asyncio.Semaphore(max(1, concurrency))
 
-                page.on("console", lambda msg: print(f"[console {msg.type}] {msg.text}"))
-                page.on("pageerror", lambda err: print(f"[pageerror] {err}"))
+        async def bounded(d):
+            async with sem:
+                await process_one(context, d)
 
-                print(f"[row {d.row_idx}] 本次使用剧名: {d.title}")
-
-                # 1. 填写基础文本字段
-                print(f"[row {d.row_idx}] 填写基础信息...")
-                await fill_basic_info(page, d)
-
-                # 2. 设置所有下拉框（关联合同、目标人群、源语言、AI短剧）
-                print(f"[row {d.row_idx}] 设置下拉框...")
-                await set_dropdowns(page)
-
-                # 3. 设置开关和单选（托管模式、版权承诺、发布方式）
-                print(f"[row {d.row_idx}] 设置开关/单选...")
-                await set_switches_and_radios(page)
-
-                # 4. 下拉框选择后总集数会被清空，重新填入
-                await page.fill(SELECTORS["total_video_num"], str(d.episode_count))
-                await close_overlays(page)
-
-                # 5. 上传封面
-                if d.cover_path and Path(d.cover_path).exists():
-                    print(f"[row {d.row_idx}] 上传封面...")
-                    await upload_cover(page, d.cover_path)
-                    await close_overlays(page)
-
-                # 6. 上传视频
-                print(f"[row {d.row_idx}] 上传 {len(d.video_paths)} 个视频...")
-                await upload_videos(page, d.video_paths)
-
-                # 7. 等待视频上传完成
-                print(f"[row {d.row_idx}] 等待视频上传完成...")
-                await wait_for_uploads_complete(page, expected=len(d.video_paths))
-
-                # 8. 保存
-                print(f"[row {d.row_idx}] 点击保存...")
-                await close_overlays(page)
-                await click_save(page)
-                print(f"[row {d.row_idx}] [OK] 保存成功: {d.title}")
-
-            except Exception as e:
-                print(f"[row {d.row_idx}] [ERR] 失败: {e}")
-                if page:
-                    try:
-                        ERROR_DIR.mkdir(parents=True, exist_ok=True)
-                        await page.screenshot(path=str(ERROR_DIR / f"row_{d.row_idx}_err.png"))
-                    except Exception:
-                        pass
-            finally:
-                if page:
-                    try:
-                        await page.close()
-                    except Exception:
-                        pass
+        await asyncio.gather(*[bounded(d) for d in ready])
 
         await context.close()
     print("[INFO] 完成")
@@ -169,8 +183,9 @@ def main():
     parser = argparse.ArgumentParser(description="TikTok Drama Center 自动上传")
     parser.add_argument("excel", nargs="?", default="export_20260706_104908.xlsx", help="Excel 文件路径")
     parser.add_argument("--limit", type=int, default=None, help="仅处理前 N 部剧")
+    parser.add_argument("--concurrency", type=int, default=MAX_CONCURRENT, help=f"同时并发处理的剧集数（每个剧一个 Tab），默认 {MAX_CONCURRENT}")
     args = parser.parse_args()
-    asyncio.run(run(Path(args.excel), limit=args.limit))
+    asyncio.run(run(Path(args.excel), limit=args.limit, concurrency=args.concurrency))
 
 
 if __name__ == "__main__":
