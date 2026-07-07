@@ -381,6 +381,8 @@ async def fill_and_save(page, drama) -> None:
     await close_overlays(page)
     print(f"[row {drama.row_idx}] 上传 {len(drama.video_paths)} 个视频...")
     await upload_videos(page, drama.video_paths)
+    print(f"[row {drama.row_idx}] 等待视频上传完成...")
+    await wait_for_uploads_complete(page, expected=len(drama.video_paths))
     await close_overlays(page)
     print(f"[row {drama.row_idx}] 点击保存...")
     await click_save(page)
