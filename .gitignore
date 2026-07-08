@@ -16,3 +16,7 @@ page_form.png
 excel_preview.json
 reader_test.json
 export_*.xlsx
+
+# Archives & runtime logs
+*.zip
+*.log
