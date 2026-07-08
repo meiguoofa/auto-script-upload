@@ -88,7 +88,7 @@ async def fill_basic_info(page: Page, drama) -> None:
     await page.fill(SELECTORS["title"], drama.title)
     await page.fill(SELECTORS["description"], drama.description)
     await page.fill(SELECTORS["total_video_num"], str(drama.episode_count))
-    await page.fill(SELECTORS["preview_video_num"],  str(min(DEFAULTS["preview_video_num"], str(int(drama.episode_count) - 1))))
+    await page.fill(SELECTORS["preview_video_num"],  str(min(int(DEFAULTS["preview_video_num"]), int(drama.episode_count) - 1)))
     await page.fill(SELECTORS["preview_video_num_on_profile"], DEFAULTS["preview_video_num_on_profile"])
 
 
@@ -326,19 +326,12 @@ async def wait_for_uploads_complete(page: Page, expected: int, timeout_s: int = 
 
     page.on("console", _on_console)
     try:
-        loop = asyncio.get_event_loop()
-        deadline = loop.time() + timeout_s
-        grace = loop.time() + 120  # 0 进度宽限期
-        while loop.time() < deadline:
+        deadline = asyncio.get_event_loop().time() + timeout_s
+        while asyncio.get_event_loop().time() < deadline:
             if done_count["n"] >= expected:
                 # 再给页面一点时间把视频写入表单状态
                 await page.wait_for_timeout(2000)
                 return
-            if await accept_invite_modal(page):
-                modal_seen["b"] = True
-            # 接受过弹窗但依然 0 进度 → 提前抛出，让上层重传
-            if modal_seen["b"] and done_count["n"] == 0 and loop.time() > grace:
-                raise TimeoutError("被邀请弹窗阻断，0 完成，需重试上传")
             await asyncio.sleep(2)
         raise TimeoutError(
             f"视频上传等待超时：完成 {done_count['n']} / 预期 {expected}"
