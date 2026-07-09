@@ -188,7 +188,11 @@ async def select_dropdown_by_placeholder(page: Page, placeholder: str, option_te
             ".dropdown-item, [class*='select-option'], [class*='dropdown-option']",
             has_text=option_text,
         )
-    await option.first.click()
+    try:
+        await option.first.scroll_into_view_if_needed()
+        await option.first.click(timeout=10000)
+    except Exception:
+        await option.first.evaluate("el => el.click()")
 
     # 给下拉关闭留一点时间
     await page.wait_for_timeout(300)
@@ -207,7 +211,11 @@ async def select_contract(page: Page) -> None:
     # 选择第一个选项
     option = page.locator(".semi-select-option-list > div").first
     await option.wait_for(state="visible", timeout=10000)
-    await option.click()
+    try:
+        await option.scroll_into_view_if_needed()
+        await option.click(timeout=10000)
+    except Exception:
+        await option.evaluate("el => el.click()")
     await page.wait_for_timeout(300)
 
 
@@ -267,6 +275,47 @@ async def close_overlays(page: Page) -> None:
         pass
 
 
+async def _dismiss_minidrama_modal(page: Page, modal) -> None:
+    """兜底关闭封面裁剪弹窗：先点确认按钮，再按 Escape，最后强制移除 DOM。"""
+    try:
+        if await modal.count() == 0 or not await modal.is_visible():
+            return
+    except Exception:
+        return
+
+    # 1) 尝试点击确认类按钮
+    try:
+        confirm_btn = modal.locator(
+            'button:has-text("Confirm"), button:has-text("确认"), '
+            'button:has-text("OK"), button:has-text("确定")'
+        ).first
+        if await confirm_btn.count() > 0 and await confirm_btn.is_visible():
+            await confirm_btn.click()
+            try:
+                await modal.wait_for(state="hidden", timeout=3000)
+                return
+            except PlaywrightTimeout:
+                pass
+    except Exception:
+        pass
+
+    # 2) 尝试 Escape
+    try:
+        await page.keyboard.press("Escape")
+        await page.wait_for_timeout(500)
+        if await modal.count() == 0 or not await modal.is_visible():
+            return
+    except Exception:
+        pass
+
+    # 3) 兜底：强制移除 DOM
+    try:
+        await modal.evaluate("el => el && el.remove()")
+        await modal.wait_for(state="hidden", timeout=3000)
+    except Exception:
+        pass
+
+
 async def upload_cover(page: Page, cover_path: Path) -> None:
     """上传封面图：操作隐藏 input，处理裁剪弹窗后确认。"""
     cover_path = Path(cover_path)
@@ -282,6 +331,8 @@ async def upload_cover(page: Page, cover_path: Path) -> None:
     try:
         await modal.wait_for(state="visible", timeout=8000)
     except PlaywrightTimeout:
+        # 弹窗可能在超时后才出现，清理一下再继续
+        await _dismiss_minidrama_modal(page, modal)
         return
 
     confirm_btn = modal.locator('button:has-text("Confirm")')
@@ -290,7 +341,10 @@ async def upload_cover(page: Page, cover_path: Path) -> None:
     if await confirm_btn.count() == 0:
         confirm_btn = modal.locator('button[type="button"]').last
     await confirm_btn.click()
-    await modal.wait_for(state="hidden", timeout=10000)
+    try:
+        await modal.wait_for(state="hidden", timeout=10000)
+    except PlaywrightTimeout:
+        await _dismiss_minidrama_modal(page, modal)
 
 
 async def upload_videos(page: Page, video_paths: List[Path]) -> None:
@@ -314,15 +368,19 @@ async def upload_videos(page: Page, video_paths: List[Path]) -> None:
     await page.wait_for_timeout(3000)
 
 
-async def wait_for_uploads_complete(page: Page, expected: int, timeout_s: int = 900) -> None:
+async def wait_for_uploads_complete(page: Page, expected: int, timeout_s: int = 1800) -> None:
     """通过监听控制台的 VIDEO_UPLOAD_FULL_FLOW_SUCCESS 事件，等待所有视频上传完成。"""
     import asyncio
 
     done_count = {"n": 0}
+    last_success_time = {"t": asyncio.get_event_loop().time()}
+    last_warning_time = {"t": asyncio.get_event_loop().time()}
 
     def _on_console(msg):
         if "VIDEO_UPLOAD_FULL_FLOW_SUCCESS" in msg.text:
             done_count["n"] += 1
+            last_success_time["t"] = asyncio.get_event_loop().time()
+            print(f"[UPLOAD] 进度 {done_count['n']}/{expected}")
 
     page.on("console", _on_console)
     try:
@@ -331,7 +389,16 @@ async def wait_for_uploads_complete(page: Page, expected: int, timeout_s: int = 
             if done_count["n"] >= expected:
                 # 再给页面一点时间把视频写入表单状态
                 await page.wait_for_timeout(2000)
+                print(f"[UPLOAD] 全部 {expected} 个视频上传完成")
                 return
+
+            elapsed = asyncio.get_event_loop().time() - last_success_time["t"]
+            if done_count["n"] > 0 and elapsed > 300:
+                now = asyncio.get_event_loop().time()
+                if now - last_warning_time["t"] >= 60:
+                    print(f"[UPLOAD] 警告：{elapsed:.0f} 秒没有新的上传成功事件")
+                    last_warning_time["t"] = now
+
             await asyncio.sleep(2)
         raise TimeoutError(
             f"视频上传等待超时：完成 {done_count['n']} / 预期 {expected}"

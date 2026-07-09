@@ -10,7 +10,7 @@ ERROR_DIR = BASE_DIR / "errors"
 TARGET_LIST_URL = "https://www.tiktokdramacenter.com/series/list"
 DRAFT_URL_PREFIX = "https://www.tiktokdramacenter.com/series/draft"
 BROWSER_CHANNEL = "msedge"
-MAX_PARALLEL_TABS = 10
+MAX_PARALLEL_TABS = 2  # 2 为可靠上限；更高会触发合同/合集创建限流
 HEADLESS = False
 VIEWPORT = {"width": 1440, "height": 900}
 

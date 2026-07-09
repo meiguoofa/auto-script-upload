@@ -42,6 +42,9 @@ async def process_one_drama(context, drama: Drama) -> None:
         drama.draft_url = page.url
         print(f"[row {drama.row_idx}] 新建 draft: {page.url}")
 
+        page.on("console", lambda msg: print(f"[row {drama.row_idx}] [console {msg.type}] {msg.text}"))
+        page.on("pageerror", lambda err: print(f"[row {drama.row_idx}] [pageerror] {err}"))
+
         await fill_and_save(page, drama)
         drama.status = "done"
         print(f"[row {drama.row_idx}] [OK] 保存成功: {safe_str(drama.title)}")
