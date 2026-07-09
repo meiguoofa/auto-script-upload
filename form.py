@@ -5,7 +5,7 @@ from typing import List, Optional
 
 from playwright.async_api import Page, TimeoutError as PlaywrightTimeout
 
-from config import COMBOBOX_PLACEHOLDERS, DEFAULTS, SELECTORS, TARGET_LIST_URL
+from config import COMBOBOX_PLACEHOLDERS, DEFAULTS, SELECTORS, TARGET_LIST_URL, UPLOAD_TIMEOUT_SECONDS
 
 
 async def ensure_logged_in(context, list_url: str = TARGET_LIST_URL) -> None:
@@ -190,9 +190,12 @@ async def select_dropdown_by_placeholder(page: Page, placeholder: str, option_te
         )
     try:
         await option.first.scroll_into_view_if_needed()
-        await option.first.click(timeout=10000)
+        await option.first.click(force=True, timeout=10000)
     except Exception:
-        await option.first.evaluate("el => el.click()")
+        try:
+            await option.first.evaluate("el => el.click()")
+        except Exception:
+            pass
 
     # 给下拉关闭留一点时间
     await page.wait_for_timeout(300)
@@ -213,9 +216,12 @@ async def select_contract(page: Page) -> None:
     await option.wait_for(state="visible", timeout=10000)
     try:
         await option.scroll_into_view_if_needed()
-        await option.click(timeout=10000)
+        await option.click(force=True, timeout=10000)
     except Exception:
-        await option.evaluate("el => el.click()")
+        try:
+            await option.evaluate("el => el.click()")
+        except Exception:
+            pass
     await page.wait_for_timeout(300)
 
 
@@ -368,7 +374,7 @@ async def upload_videos(page: Page, video_paths: List[Path]) -> None:
     await page.wait_for_timeout(3000)
 
 
-async def wait_for_uploads_complete(page: Page, expected: int, timeout_s: int = 1800) -> None:
+async def wait_for_uploads_complete(page: Page, expected: int, timeout_s: int = UPLOAD_TIMEOUT_SECONDS) -> None:
     """通过监听控制台的 VIDEO_UPLOAD_FULL_FLOW_SUCCESS 事件，等待所有视频上传完成。"""
     import asyncio
 
